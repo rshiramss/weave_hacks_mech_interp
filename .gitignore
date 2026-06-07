@@ -10,6 +10,12 @@ __pycache__/
 venv/
 .ipynb_checkpoints/
 
+# Frontend (Vite/React)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.tsbuildinfo
+
 # OS
 .DS_Store
 
@@ -34,4 +40,26 @@ ARCHITECTURE.md
 hackathon.md
 idea.md
 data/SYNTHETIC_DATA_PLAN.md
+data/DATA_CLEANING.md
+frontend_implementation.md
+mi_implementation.md
+plan_five.md
 scrape_docs.py
+
+# Linear probe artifacts + datasets (large / generated — keep out of git)
+data/probes/
+data/cache/
+data/probe_cache/
+registry_ground.json
+data/eval_holdout.jsonl
+data/raw_dataset.jsonl
+data/registry_clean.jsonl
+data/registry_train.jsonl
+data/registry_regen.jsonl
+data/activation_labels.jsonl
+data/quarantine/
+data/*_probe_*.jsonl
+*.pkl
+*.npy
+*.npz
+# (data/registry.json stays tracked — it's the catalog the code needs)

@@ -4,7 +4,7 @@ One generation job == one tool == one row. The label (agent_id, tool_id) is fixe
 by the job args BEFORE the model runs; the model only writes a realistic message
 that *requires* that tool. Jobs fan out across Modal containers via `.starmap`.
 
-Backend: W&B Inference API (OpenAI-compatible) calling meta-llama/Llama-3.1-8B-Instruct
+Backend: W&B Inference API (OpenAI-compatible) calling Qwen/Qwen2.5-7B-Instruct
 — the same model used later for activation extraction (Plan Step 5). `WANDB_API_KEY`
 is injected into containers via a Modal Secret built from the local environment.
 
@@ -39,7 +39,7 @@ APP_NAME = "probe-router-generate"
 VOLUME_NAME = "probe-router-data"
 
 # --- Generation backend ------------------------------------------------------
-DEFAULT_MODEL = "meta-llama/Llama-3.1-8B-Instruct"  # served by W&B Inference
+DEFAULT_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # served by W&B Inference
 WANDB_BASE_URL = "https://api.inference.wandb.ai/v1"
 TEMPERATURE = 0.9  # high → varied wording across a tool's many examples
 MAX_TOKENS = 220  # a 1-4 sentence analyst message
@@ -280,6 +280,80 @@ def _persist_to_volume(paths: list[Path]) -> None:
             batch.put_file(str(path), f"/{path.name}")
 
 
+# --- Regeneration helpers (top up tools thinned by label-conflict cleaning) ----
+
+
+def _read_rows(path: Path) -> list[dict]:
+    """Load a cleaned dataset (JSON array or JSONL) into row dicts."""
+    text = path.read_text()
+    if text.lstrip().startswith("["):
+        return json.loads(text)
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def _count_per_tool(rows: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for row in rows:
+        counts[row["tool_id"]] += 1
+    return counts
+
+
+def _build_deficit_jobs(
+    tools: list[dict], agent_by_id: dict, counts: dict[str, int],
+    target_per_tool: int, model: str
+) -> list[tuple]:
+    """One job per missing example for tools below the target count.
+
+    `example_idx` continues from the current count so the scenario angles keep
+    rotating instead of repeating the first few framings.
+    """
+    jobs: list[tuple] = []
+    for tool in tools:
+        have = counts.get(tool["tool_id"], 0)
+        agent = agent_by_id[tool["agent_id"]]
+        for i in range(have, target_per_tool):
+            jobs.append((
+                tool["tool_id"], tool["agent_id"], tool["name"],
+                tool["description"], agent["name"], agent["description"], i, model,
+            ))
+    return jobs
+
+
+def _accept_new_rows(results: list, text_to_tool: dict[str, str]) -> list[dict]:
+    """Keep only new queries whose text is unseen anywhere.
+
+    Rejecting any text already mapped to a tool blocks BOTH duplicates (same tool)
+    and the cross-tool collisions that poisoned the original set — the new rows
+    can never re-introduce an ambiguous query_text.
+    """
+    accepted: list[dict] = []
+    seen = dict(text_to_tool)
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        text = result["query_text"]
+        if text in seen:
+            continue
+        seen[text] = result["tool_id"]
+        accepted.append({
+            "query_text": text,
+            "agent_id": result["agent_id"],
+            "tool_id": result["tool_id"],
+            "style": "nl",
+            "source": "regen",
+        })
+    return accepted
+
+
+def _enforce_unique(rows: list[dict]) -> list[dict]:
+    """Defensive final pass: drop any query_text still mapping to >1 tool_id."""
+    tools_per_query: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        tools_per_query[row["query_text"]].add(row["tool_id"])
+    bad = {q for q, tools in tools_per_query.items() if len(tools) > 1}
+    return [r for r in rows if r["query_text"] not in bad]
+
+
 @app.local_entrypoint()
 def main(
     examples_per_tool: int = 50,  # pilot default per Plan Step 3 sizing
@@ -340,3 +414,54 @@ def main(
     if persist_volume:
         _persist_to_volume(produced)
         print(f"[generate] uploaded {len(produced)} files to volume '{VOLUME_NAME}'")
+
+
+@app.local_entrypoint()
+def regen(
+    existing: str = "data/registry_clean.jsonl",
+    target_per_tool: int = 90,
+    out: str = "data/registry_regen.jsonl",
+    model: str = DEFAULT_MODEL,
+    registry_path: str = "data/registry.json",
+    persist_volume: bool = False,
+):
+    """Top up tools thinned by label-conflict cleaning back to target_per_tool.
+
+    Only generates the deficit (target minus current count) per tool, rejects any
+    query that collides with an existing or new query_text, and writes the merged,
+    uniqueness-enforced dataset. Optional — the cleaned set already holds ~79-90
+    rows/tool; run this only when you want a balanced count per tool.
+
+        modal run modal_app/generate_dataset.py::regen --target-per-tool 90
+    """
+    existing_rows = _read_rows(Path(existing))
+    registry = _load_registry(Path(registry_path))
+    agent_by_id = {a["agent_id"]: a for a in registry["agents"]}
+
+    counts = _count_per_tool(existing_rows)
+    jobs = _build_deficit_jobs(registry["tools"], agent_by_id, counts,
+                               target_per_tool, model)
+    print(f"[regen] existing rows={len(existing_rows)} "
+          f"deficit jobs={len(jobs)} target/tool={target_per_tool}")
+    if not jobs:
+        print("[regen] all tools already at target — nothing to generate")
+        return
+
+    results = list(generate_one.starmap(jobs, return_exceptions=True))
+    text_to_tool = {r["query_text"]: r["tool_id"] for r in existing_rows}
+    accepted = _accept_new_rows(results, text_to_tool)
+    merged = _enforce_unique(existing_rows + accepted)
+
+    out_path = Path(out)
+    _write_jsonl(out_path, merged)
+    new_counts = _count_per_tool(merged)
+    below = sum(1 for t in registry["tools"]
+                if new_counts.get(t["tool_id"], 0) < target_per_tool)
+    print(f"[regen] accepted {len(accepted)} new rows "
+          f"({len(results) - len(accepted)} rejected/failed)")
+    print(f"[regen] wrote {len(merged)} rows -> {out_path}; "
+          f"{below} tools still below target")
+
+    if persist_volume:
+        _persist_to_volume([out_path])
+        print(f"[regen] uploaded {out_path.name} to volume '{VOLUME_NAME}'")
