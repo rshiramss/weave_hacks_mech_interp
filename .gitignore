@@ -28,3 +28,10 @@ wandb-docs/
 
 # Diagrams
 diagrams/
+
+# Planning docs + scrape script
+ARCHITECTURE.md
+hackathon.md
+idea.md
+data/SYNTHETIC_DATA_PLAN.md
+scrape_docs.py
