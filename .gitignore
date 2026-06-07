@@ -35,3 +35,16 @@ hackathon.md
 idea.md
 data/SYNTHETIC_DATA_PLAN.md
 scrape_docs.py
+
+# Linear probe artifacts + datasets (large / generated — keep out of git)
+data/probes/
+data/cache/
+data/probe_cache/
+registry_ground.json
+data/eval_holdout.jsonl
+data/raw_dataset.jsonl
+data/*_probe_*.jsonl
+*.pkl
+*.npy
+*.npz
+# (data/registry.json stays tracked — it's the catalog the code needs)

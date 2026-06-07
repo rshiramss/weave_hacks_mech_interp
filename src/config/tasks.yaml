@@ -1,0 +1,25 @@
+# Single investigation task (Stage 3, agent_architecture.md §6.5).
+# `{context}` is filled at kickoff time via inputs={"context": query_text} — keep
+# the literal placeholder here; the crew factory must NOT pre-format it.
+investigate_alert:
+  description: >
+    Investigate this SOC alert:
+
+    {context}
+
+    Instructions:
+    1. Read the alert and indicators in the message.
+    2. Choose the most relevant tools from those available (at most five).
+    3. Call tools to gather evidence — prefer fewer, targeted calls.
+    4. If tools return no hits, say so explicitly.
+    5. Do not recommend routing to another team; state what this specialist found.
+  expected_output: >
+    A JSON object with exactly these keys:
+    - "alert_summary": one sentence restating the alert
+    - "tools_used": list of tool names called (may be empty)
+    - "findings": bullet list of factual observations from tool output
+    - "severity_assessment": "unchanged" | "escalate" | "downgrade" with one-line reason
+    - "recommended_next_step": one concrete action for the SOC queue
+
+    Return valid JSON only, no markdown fences.
+  agent: soc_specialist

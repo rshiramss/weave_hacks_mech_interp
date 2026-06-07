@@ -4,7 +4,7 @@ One generation job == one tool == one row. The label (agent_id, tool_id) is fixe
 by the job args BEFORE the model runs; the model only writes a realistic message
 that *requires* that tool. Jobs fan out across Modal containers via `.starmap`.
 
-Backend: W&B Inference API (OpenAI-compatible) calling meta-llama/Llama-3.1-8B-Instruct
+Backend: W&B Inference API (OpenAI-compatible) calling Qwen/Qwen2.5-7B-Instruct
 — the same model used later for activation extraction (Plan Step 5). `WANDB_API_KEY`
 is injected into containers via a Modal Secret built from the local environment.
 
@@ -39,7 +39,7 @@ APP_NAME = "probe-router-generate"
 VOLUME_NAME = "probe-router-data"
 
 # --- Generation backend ------------------------------------------------------
-DEFAULT_MODEL = "meta-llama/Llama-3.1-8B-Instruct"  # served by W&B Inference
+DEFAULT_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # served by W&B Inference
 WANDB_BASE_URL = "https://api.inference.wandb.ai/v1"
 TEMPERATURE = 0.9  # high → varied wording across a tool's many examples
 MAX_TOKENS = 220  # a 1-4 sentence analyst message
