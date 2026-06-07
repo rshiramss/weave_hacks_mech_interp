@@ -1,0 +1,74 @@
+flowchart TB
+    subgraph Input["Input"]
+        E["SOC Event / Alert"]
+    end
+
+    subgraph Flow["ProbeRoutedFlow — Orchestrator (Python)"]
+        direction TB
+        INGEST["@start: ingest_event()"]
+        STATE[("Flow State<br/>context · hop · event · trace_log")]
+        INGEST --> STATE
+
+        subgraph Hop["Routing Hop (repeats until done)"]
+            direction TB
+            FP["Forward pass<br/>Qwen 1.5B · query-only"]
+            AP["Agent probe<br/>top-2 + confidence"]
+            PICK["Agent picker<br/>LLM chooses 1 of 2"]
+            TP["Tool probe<br/>masked to agent · top-5"]
+            EXEC["Specialist Crew.kickoff()"]
+            APPEND["Append result to context"]
+
+            FP --> AP --> PICK --> TP --> EXEC --> APPEND
+        end
+
+        STATE --> FP
+        APPEND --> STATE
+        ROUTER{"@router:<br/>another hop?"}
+        APPEND --> ROUTER
+        ROUTER -->|yes| FP
+        ROUTER -->|no| OUT
+    end
+
+    subgraph Specialist["Specialist Crew (per hop)"]
+        direction TB
+        INPUTS["kickoff(inputs=<br/>context, hop, ...)"]
+        TASK["Task description<br/>{context} placeholder"]
+        TOOLS["tools = probe top-5 only"]
+        AGENT["SOC Specialist Agent<br/>allow_delegation=False"]
+        INPUTS --> TASK --> AGENT
+        TOOLS --> AGENT
+        RESULT["result.raw"]
+        AGENT --> RESULT
+    end
+
+    subgraph Registry["Registry (Redis)"]
+        REG["~10 agents · ~200 tools<br/>agent_id tags for masking"]
+    end
+
+    subgraph Baseline["Frontier Baseline (comparison)"]
+        FB["Single orchestrator<br/>all 200 tools in context"]
+    end
+
+    subgraph Weave["Weave Observability"]
+        W["Trace tree per run<br/>probe confidences · tokens · latency"]
+    end
+
+    E --> INGEST
+    REG -.-> AP
+    REG -.-> TP
+    REG -.-> EXEC
+    TP --> EXEC
+    EXEC --> INPUTS
+    RESULT --> APPEND
+
+    Flow -.-> W
+    Specialist -.-> W
+    Baseline -.-> W
+
+    OUT["Final triage output"]
+
+    style Flow fill:#e8f4fc,stroke:#1a73e8
+    style Specialist fill:#fef7e0,stroke:#f9ab00
+    style Registry fill:#f3e8fd,stroke:#9334e6
+    style Baseline fill:#fce8e6,stroke:#ea4335
+    style Weave fill:#e6f4ea,stroke:#34a853
