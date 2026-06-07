@@ -1,0 +1,31 @@
+{
+  "incontext": {
+    "n": 50,
+    "routing_exact_match": 0.24,
+    "agent_top1": 0.28,
+    "tool_top1": 0.24,
+    "tool_in_shortlist": 0.28,
+    "cost_usd": 0.000770008,
+    "latency_ms": 166537.208
+  },
+  "rag": {
+    "n": 50,
+    "routing_exact_match": 0.76,
+    "agent_top1": 0.9,
+    "tool_top1": 0.76,
+    "tool_in_shortlist": 0.88,
+    "cost_usd": 0.0,
+    "latency_ms": 4883.63
+  },
+  "probe": {
+    "n": 50,
+    "routing_exact_match": 0.8,
+    "agent_top1": 0.8,
+    "tool_top1": 0.8,
+    "tool_in_shortlist": 0.8,
+    "cost_usd": 0.0,
+    "latency_ms": 10384.302,
+    "agent_recall_at_2": 0.98,
+    "tool_recall_at_5": 0.8
+  }
+}
