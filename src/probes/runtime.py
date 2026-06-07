@@ -25,10 +25,19 @@ def agent_probe(h, k: int = 2) -> list[tuple[str, float]]:
     return agent_probe_clf.top_k(h, k)
 
 
-@weave.op(name="tool_probe")
+def _tool_probe_display_name(call) -> str:
+    """Trace each per-agent tool probe by the agent it ran for (e.g. tool_probe:log_search)."""
+    try:
+        return f"tool_probe:{(call.inputs or {}).get('agent_id', '?')}"
+    except Exception:  # noqa: BLE001 — display name is cosmetic, never break the op
+        return "tool_probe"
+
+
+@weave.op(name="tool_probe", call_display_name=_tool_probe_display_name)
 def tool_probe(h, agent_id: str, k: int = 5) -> list[tuple[str, float]]:
-    _agent, tool_probe_clf = load_probes()
-    return tool_probe_clf.top_k_masked(h, agent_id, k)
+    """Top-5 tools from the chosen agent's own 40-class probe (no masking)."""
+    _agent, tool_probes = load_probes()
+    return tool_probes.top_k(h, agent_id, k)
 
 
 @weave.op(name="probe_route")

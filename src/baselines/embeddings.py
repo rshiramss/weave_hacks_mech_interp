@@ -1,10 +1,10 @@
-"""Local retrieval over Modal-precomputed tool embeddings (Stage 5 hybrid, Arm 2).
+"""Local retrieval over tool-description embeddings (Stage 5, Arm 2 RAG).
 
-Tool vectors are computed once on Modal GPU (modal_app/precompute_embeddings.py,
-BAAI/bge-small-en-v1.5) and stored in the probe-router-data Volume as
-`tool_embeddings.npz` + `tool_ids.json`. This module syncs them to data/cache/
-once, embeds the query via the same Modal model, and does cosine top-k locally —
-so sentence-transformers / PyTorch never run on the laptop.
+Self-contained MiniLM baseline: encode all 200 tool descriptions from
+`data/registry.json` with `all-MiniLM-L6-v2` (sentence-transformers, normalized),
+then cosine top-k a query against them with in-memory NumPy. No Modal, no Volume,
+no vector DB — just MiniLM embeddings + normalized cosine. The model and the tool
+matrix are built once per process and cached in memory.
 """
 
 import json
@@ -13,63 +13,53 @@ from pathlib import Path
 
 import numpy as np
 
-VOLUME_NAME = "probe-router-data"
-EMB_APP = "baseline-embeddings"
-EMB_FILE = "tool_embeddings.npz"
-IDS_FILE = "tool_ids.json"
+EMBED_MODEL = "all-MiniLM-L6-v2"
+TOP_K = 5
 
-_CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "cache"
-
-
-def _ensure_local() -> tuple[Path, Path]:
-    """Sync embeddings + ids from the Modal Volume into data/cache/ (once)."""
-    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    emb_path, ids_path = _CACHE_DIR / EMB_FILE, _CACHE_DIR / IDS_FILE
-    if emb_path.exists() and ids_path.exists():
-        return emb_path, ids_path
-
-    import modal
-
-    vol = modal.Volume.from_name(VOLUME_NAME)
-    try:
-        if not emb_path.exists():
-            emb_path.write_bytes(b"".join(vol.read_file(EMB_FILE)))
-        if not ids_path.exists():
-            ids_path.write_text(b"".join(vol.read_file(IDS_FILE)).decode())
-    except Exception as exc:  # noqa: BLE001 — surface the real cause
-        raise RuntimeError(
-            f"No embeddings in volume '{VOLUME_NAME}'. Run "
-            "`modal run modal_app/precompute_embeddings.py` first."
-        ) from exc
-    return emb_path, ids_path
+_REGISTRY_PATH = Path(__file__).resolve().parents[2] / "data" / "registry.json"
 
 
 @lru_cache(maxsize=1)
-def _load() -> tuple[list[str], list[str], np.ndarray]:
-    emb_path, ids_path = _ensure_local()
-    with np.load(emb_path) as data:
-        matrix = data["embeddings"]
-    meta = json.loads(ids_path.read_text())
-    return meta["tool_ids"], meta["agent_ids"], matrix
+def _model():
+    """Load the MiniLM encoder once per process."""
+    from sentence_transformers import SentenceTransformer
+
+    return SentenceTransformer(EMBED_MODEL)
+
+
+@lru_cache(maxsize=1)
+def _catalog() -> tuple[list[str], list[str], np.ndarray]:
+    """Tool ids, their agent ids, and the normalized tool-description matrix."""
+    registry = json.loads(_REGISTRY_PATH.read_text())
+    tools = registry["tools"]
+    tool_ids = [t["tool_id"] for t in tools]
+    agent_ids = [t["agent_id"] for t in tools]
+    descriptions = [t["description"] for t in tools]
+
+    matrix = _model().encode(
+        descriptions, normalize_embeddings=True, show_progress_bar=False
+    )
+    return tool_ids, agent_ids, np.asarray(matrix, dtype=np.float32)
 
 
 def agent_of_tool() -> dict:
-    tool_ids, agent_ids, _matrix = _load()
+    """Map each tool_id to its owning agent_id."""
+    tool_ids, agent_ids, _matrix = _catalog()
     return dict(zip(tool_ids, agent_ids))
 
 
 def embed_query(text: str) -> np.ndarray:
-    """Embed one query via the Modal model (keeps ST off the laptop)."""
-    import modal
-
-    embedder = modal.Cls.from_name(EMB_APP, "ToolEmbedder")()
-    vector = embedder.encode.remote([text])[0]
+    """Embed one query with the same normalized MiniLM model."""
+    vector = _model().encode([text], normalize_embeddings=True)[0]
     return np.asarray(vector, dtype=np.float32)
 
 
-def top_k_tools(query_text: str, k: int = 5) -> list[tuple[str, float]]:
-    """Cosine top-k tool_ids for the query over the cached matrix."""
-    tool_ids, _agent_ids, matrix = _load()
+def top_k_tools(query_text: str, k: int = TOP_K) -> list[tuple[str, float]]:
+    """Cosine top-k (tool_id, score) for the query over the tool matrix.
+
+    Both sides are L2-normalized, so the dot product is cosine similarity.
+    """
+    tool_ids, _agent_ids, matrix = _catalog()
     query_vec = embed_query(query_text)
     scores = matrix @ query_vec
     order = np.argsort(-scores)[:k]
