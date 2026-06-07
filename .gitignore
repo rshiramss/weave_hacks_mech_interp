@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+data/
+wandb/
+*.pkl
+*.npy
+*.json
+*.png
+*.txt
+.env
+phase3_results.pkl
+test_output.json
