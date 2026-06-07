@@ -25,3 +25,6 @@ modal_docs/
 openai-api-reference/
 redis-docs/
 wandb-docs/
+
+# Diagrams
+diagrams/
