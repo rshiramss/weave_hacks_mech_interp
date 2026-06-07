@@ -64,14 +64,3 @@ python scripts/demo_comparison.py --query "..."             # Trace Comparison d
 - **Leaderboard:** Weave → Evaluations → filter `soc-routing-benchmark` →
   Visualize → Configure (`routing_exact_match` higher-better, `estimated_cost`
   lower-better) → save `soc-routing-leaderboard`.
-
-## Status
-
-| Stage | State |
-|-------|-------|
-| 3 Mock tools + specialist crews | done |
-| 5 Baseline arms 1 & 2 (hybrid Modal + local) | done |
-| 6 Holdout + Evaluation + wandb.Table | code done; needs `data/eval_holdout.jsonl` |
-| 7 Leaderboard + cost + Trace Comparison | cost + comparison done; leaderboard = UI step |
-| 8 Demo UI | done (stub/rag/incontext backends) |
-| 2/4 Probes + ProbeRoutedFlow (Arm 3) | done — run with `ROUTER_BACKEND=probe` (retrain: `scripts/{audit_registry_ground,train_probes}.py`) |
