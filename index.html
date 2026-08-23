@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentInterp</title>
+<style>
+  :root {
+    --accent: #2563EB;
+    --border: #E2E8F0;
+    --text: #1E293B;
+    --text-muted: #64748B;
+    --bg-subtle: #F8FAFC;
+    --chip-bg: #F1F5F9;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    background: #FFFFFF;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 40px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+
+  nav {
+    display: flex;
+    gap: 4px;
+  }
+
+  nav button {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  nav button:hover {
+    background: var(--bg-subtle);
+    color: var(--text);
+  }
+
+  nav button.active {
+    color: var(--accent);
+    font-weight: 600;
+    border-color: var(--border);
+    background: var(--bg-subtle);
+  }
+
+  main {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 32px 40px 80px;
+  }
+
+  .tab-panel {
+    display: none;
+  }
+
+  .tab-panel.active {
+    display: block;
+  }
+
+  /* ---------- Architecture Trees ---------- */
+
+  .trees {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+  }
+
+  .tree-card {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    background: #FFFFFF;
+    transition: box-shadow 0.15s, border-color 0.15s;
+  }
+
+  .tree-card.drag-over {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  }
+
+  .tree-card.probe {
+    border-color: rgba(37, 99, 235, 0.35);
+    background: linear-gradient(180deg, rgba(37, 99, 235, 0.03) 0%, rgba(37, 99, 235, 0) 100%);
+  }
+
+  .tree-title {
+    font-size: 15px;
+    font-weight: 600;
+    text-align: center;
+    margin: 0 0 18px;
+  }
+
+  .tree-card.probe .tree-title {
+    color: var(--accent);
+  }
+
+  .tree-diagram {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .node {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    text-align: center;
+    background: var(--bg-subtle);
+    color: var(--text);
+    width: 100%;
+  }
+
+  .node.root {
+    font-weight: 600;
+    background: #FFFFFF;
+    border-color: var(--text);
+  }
+
+  .node.probe-node {
+    border-color: var(--accent);
+    background: rgba(37, 99, 235, 0.06);
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  .connector {
+    width: 1px;
+    height: 16px;
+    background: var(--border);
+  }
+
+  .branch-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    width: 100%;
+  }
+
+  .branch-row .node {
+    font-size: 10.5px;
+    padding: 7px 4px;
+  }
+
+  .branch-wrap {
+    width: 100%;
+    position: relative;
+    padding-top: 16px;
+  }
+
+  .branch-wrap::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 1px;
+    height: 16px;
+    background: var(--border);
+  }
+
+  .fan-line {
+    position: relative;
+    height: 12px;
+    width: 100%;
+  }
+
+  .fan-line::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .fan-line::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 1px;
+    height: 12px;
+    background: var(--border);
+  }
+
+  .drop-target-hint {
+    margin-top: 14px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-muted);
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    padding: 8px;
+  }
+
+  /* ---------- Query chips ---------- */
+
+  .chips-section {
+    margin-top: 36px;
+  }
+
+  .chips-section h2,
+  .results-section h2,
+  .custom-section h2 {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin: 0 0 12px;
+  }
+
+  .chip-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .chip {
+    background: var(--chip-bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 8px 16px;
+    font-size: 12.5px;
+    color: var(--text);
+    cursor: grab;
+    user-select: none;
+    transition: background 0.15s, border-color 0.15s;
+    max-width: 360px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chip:hover {
+    border-color: var(--accent);
+    background: #EAF1FE;
+  }
+
+  .chip.dragging {
+    opacity: 0.4;
+  }
+
+  .chip-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 10px;
+  }
+
+  /* ---------- Results ---------- */
+
+  .results-row {
+    display: flex;
+    gap: 24px;
+    margin-top: 18px;
+  }
+
+  .result-col {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .result-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 12.5px;
+    background: var(--bg-subtle);
+    margin-top: 10px;
+  }
+
+  .result-card .label {
+    color: var(--text-muted);
+  }
+
+  .result-card .value {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .result-card .value.accent {
+    color: var(--accent);
+  }
+
+  .result-row-line {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+  }
+
+  .match-indicator {
+    color: var(--accent);
+    font-weight: 500;
+    font-size: 11px;
+    margin-left: 8px;
+  }
+
+  .confidence-bar-track {
+    width: 100%;
+    height: 4px;
+    background: #e5e7eb;
+    border-radius: 999px;
+    margin-top: 6px;
+    overflow: hidden;
+  }
+
+  .confidence-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 999px;
+  }
+
+  .loading-dots {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+    justify-content: center;
+    padding: 18px 0;
+  }
+
+  .loading-dots span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    opacity: 0.25;
+    animation: pulse 1.1s infinite ease-in-out;
+  }
+
+  .loading-dots span:nth-child(2) { animation-delay: 0.15s; }
+  .loading-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+  @keyframes pulse {
+    0%, 80%, 100% { opacity: 0.25; transform: scale(1); }
+    40% { opacity: 1; transform: scale(1.25); }
+  }
+
+  /* ---------- Custom query ---------- */
+
+  .custom-section {
+    margin-top: 44px;
+    border-top: 1px solid var(--border);
+    padding-top: 28px;
+  }
+
+  .custom-form {
+    display: flex;
+    gap: 10px;
+    max-width: 640px;
+  }
+
+  .custom-form input[type="text"] {
+    flex: 1;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-family: inherit;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    outline: none;
+  }
+
+  .custom-form input[type="text"]:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  }
+
+  .custom-form button {
+    background: var(--accent);
+    color: #FFFFFF;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .custom-form button:hover {
+    background: #1E4FCB;
+  }
+
+  .custom-form button:disabled {
+    background: var(--text-muted);
+    cursor: not-allowed;
+  }
+
+  .custom-note {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 8px;
+  }
+
+  /* ---------- Benchmark tab ---------- */
+
+  table.bench-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 8px;
+  }
+
+  table.bench-table th,
+  table.bench-table td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  table.bench-table th {
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  table.bench-table tr.highlight td {
+    background: rgba(37, 99, 235, 0.04);
+    font-weight: 600;
+  }
+
+  table.bench-table tr.highlight td:first-child {
+    color: var(--accent);
+  }
+
+  .bench-meta {
+    margin-top: 14px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+
+  .charts-row {
+    display: flex;
+    gap: 24px;
+    margin-top: 36px;
+  }
+
+  .chart-card {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+
+  .chart-card h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0 0 12px;
+    color: var(--text);
+  }
+
+  .chart-card .chart-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin: -8px 0 12px;
+  }
+
+  .run-bench-btn {
+    margin-top: 28px;
+    background: var(--accent);
+    color: #FFFFFF;
+    border: none;
+    border-radius: 6px;
+    padding: 11px 22px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .run-bench-btn:disabled {
+    background: var(--text-muted);
+    cursor: not-allowed;
+  }
+
+  .run-bench-status {
+    margin-top: 10px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+
+  section + section {
+    margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>AgentInterp</h1>
+  <nav>
+    <button id="tab-btn-demo" class="active" onclick="switchTab('demo')">Live Demo</button>
+    <button id="tab-btn-bench" onclick="switchTab('bench')">Benchmark</button>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ===================== TAB 1: LIVE DEMO ===================== -->
+  <section id="tab-demo" class="tab-panel active">
+
+    <div class="trees">
+
+      <!-- Naive -->
+      <div class="tree-card" id="tree-naive" data-system="naive">
+        <p class="tree-title">Naive</p>
+        <div class="tree-diagram">
+          <div class="node root">LLM Orchestrator</div>
+          <div class="branch-wrap">
+            <div class="fan-line"></div>
+            <div class="branch-row">
+              <div class="node">Log Search</div>
+              <div class="node">Email Security</div>
+              <div class="node">Threat Intel</div>
+              <div class="node">Network Analysis</div>
+              <div class="node">Malware Analysis</div>
+            </div>
+          </div>
+        </div>
+        <div class="drop-target-hint">Drop a query here to route it</div>
+        <div class="result-slot" id="result-naive"></div>
+      </div>
+
+      <!-- RAG -->
+      <div class="tree-card" id="tree-rag" data-system="rag">
+        <p class="tree-title">RAG</p>
+        <div class="tree-diagram">
+          <div class="node root">Query &rarr; Embedding Model</div>
+          <div class="connector"></div>
+          <div class="node">Vector Search (top-5)</div>
+          <div class="connector"></div>
+          <div class="node">LLM Executor</div>
+          <div class="branch-wrap">
+            <div class="fan-line"></div>
+            <div class="branch-row">
+              <div class="node">Log Search</div>
+              <div class="node">Email Security</div>
+              <div class="node">Threat Intel</div>
+              <div class="node">Network Analysis</div>
+              <div class="node">Malware Analysis</div>
+            </div>
+          </div>
+        </div>
+        <div class="drop-target-hint">Drop a query here to route it</div>
+        <div class="result-slot" id="result-rag"></div>
+      </div>
+
+      <!-- Probe-Routed -->
+      <div class="tree-card probe" id="tree-probe" data-system="probe">
+        <p class="tree-title">Probe-Routed (Ours)</p>
+        <div class="tree-diagram">
+          <div class="node root">Query &rarr; Qwen2.5-7B Forward Pass</div>
+          <div class="connector"></div>
+          <div class="node">Layer 24 Hidden State</div>
+          <div class="connector"></div>
+          <div class="node probe-node">Orchestrator Probe (5-class)</div>
+          <div class="connector"></div>
+          <div class="node probe-node">Tool Probe (40-class per agent)</div>
+          <div class="connector"></div>
+          <div class="node probe-node">Top-10 Tools &rarr; LLM Executor</div>
+          <div class="branch-wrap">
+            <div class="fan-line"></div>
+            <div class="branch-row">
+              <div class="node">Log Search</div>
+              <div class="node">Email Security</div>
+              <div class="node">Threat Intel</div>
+              <div class="node">Network Analysis</div>
+              <div class="node">Malware Analysis</div>
+            </div>
+          </div>
+        </div>
+        <div class="drop-target-hint">Drop a query here to route it</div>
+        <div class="result-slot" id="result-probe"></div>
+      </div>
+
+    </div>
+
+    <!-- Query chips -->
+    <div class="chips-section">
+      <h2>Sample Queries</h2>
+      <div class="chip-strip" id="chip-strip"></div>
+      <p class="chip-hint">Drag a query onto an architecture above to simulate routing it through that system.</p>
+    </div>
+
+    <!-- Custom query -->
+    <div class="custom-section">
+      <h2>Custom Query (live inference coming soon)</h2>
+      <form class="custom-form" id="custom-form">
+        <input type="text" id="custom-input" placeholder="Type a query to route through all three systems&hellip;" autocomplete="off">
+        <button type="submit" id="custom-run-btn">Run Query</button>
+      </form>
+      <p class="custom-note">Submitting runs the same simulated routing across Naive, RAG, and Probe-Routed side by side.</p>
+
+      <div class="results-row" id="custom-results-row" style="display:none;">
+        <div class="result-col"><strong style="font-size:13px;">Naive</strong><div id="custom-result-naive"></div></div>
+        <div class="result-col"><strong style="font-size:13px;">RAG</strong><div id="custom-result-rag"></div></div>
+        <div class="result-col"><strong style="font-size:13px; color: var(--accent);">Probe-Routed (Ours)</strong><div id="custom-result-probe"></div></div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ===================== TAB 2: BENCHMARK ===================== -->
+  <section id="tab-bench" class="tab-panel">
+
+    <h2 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin: 0 0 12px;">
+      Routing Accuracy &amp; Cost
+    </h2>
+
+    <table class="bench-table">
+      <thead>
+        <tr>
+          <th>Approach</th>
+          <th>Top-1 Acc</th>
+          <th>Recall@5</th>
+          <th>Recall@10</th>
+          <th>ms / query</th>
+          <th>Tokens / query</th>
+        </tr>
+      </thead>
+      <tbody id="bench-table-body">
+        <!-- populated by JS -->
+      </tbody>
+    </table>
+
+    <p class="bench-meta">Benchmark run on 200 queries, 200-tool registry, 5 agents.</p>
+
+    <button class="run-bench-btn" id="run-bench-btn">Run Full Benchmark (200 queries)</button>
+    <p class="run-bench-status" id="run-bench-status"></p>
+
+    <div class="charts-row">
+      <div class="chart-card">
+        <h3>Top-1 Accuracy</h3>
+        <p class="chart-sub">Linear scale</p>
+        <div id="chart-accuracy"></div>
+      </div>
+      <div class="chart-card">
+        <h3>Latency (ms / query)</h3>
+        <p class="chart-sub">Log scale</p>
+        <div id="chart-latency"></div>
+      </div>
+      <div class="chart-card">
+        <h3>Tokens / query</h3>
+        <p class="chart-sub">Log scale</p>
+        <div id="chart-tokens"></div>
+      </div>
+    </div>
+
+  </section>
+
+</main>
+
+<script>
+  // =====================================================================
+  // Tab switching
+  // =====================================================================
+  function switchTab(name) {
+    document.getElementById('tab-demo').classList.toggle('active', name === 'demo');
+    document.getElementById('tab-bench').classList.toggle('active', name === 'bench');
+    document.getElementById('tab-btn-demo').classList.toggle('active', name === 'demo');
+    document.getElementById('tab-btn-bench').classList.toggle('active', name === 'bench');
+  }
+
+  // =====================================================================
+  // Sample query data
+  //
+  // Each query is mapped to a "ground truth" agent and a plausible set of
+  // top-3 tools. These are used to render hardcoded/simulated results for
+  // all three architectures (Naive, RAG, Probe-Routed).
+  //
+  // TODO(Rishit): replace this static map with a live response from the
+  // inference server, e.g. POST /api/route { query } -> { agent, tools }
+  // =====================================================================
+  const SAMPLE_QUERIES = [
+    {
+      text: "did t.nguyen hit certificate signing on SRV-LNX-04 during night shift",
+      agent: "Log Search",
+      tools: ["auth_log_query", "cert_signing_audit", "shift_window_filter"]
+      confidence: { naive: 61, rag: 74, probe: 94 }
+    },
+    {
+      text: "check if 185.220.101.45 has been flagged in threat intel",
+      agent: "Threat Intel",
+      tools: ["ip_reputation_lookup", "threat_feed_search", "indicator_correlation"]
+      confidence: { naive: 58, rag: 71, probe: 91 }
+    },
+    {
+      text: "scan for open ports on prod-dc-01",
+      agent: "Network Analysis",
+      tools: ["port_scan", "service_fingerprint", "host_inventory_lookup"]
+      confidence: { naive: 64, rag: 78, probe: 96 }
+    },
+    {
+      text: "extract attachments from suspicious email INC-4510",
+      agent: "Email Security",
+      tools: ["attachment_extractor", "email_header_parser", "sandbox_detonation"]
+      confidence: { naive: 56, rag: 69, probe: 89 }
+    },
+    {
+      text: "hunt for lateral movement from j.davis on SRV-DC-01",
+      agent: "Log Search",
+      tools: ["lateral_movement_detector", "auth_log_query", "session_graph_builder"]
+      confidence: { naive: 67, rag: 80, probe: 93 }
+    },
+    {
+      text: "analyze malware hash a3f5c8d2e1b9047f",
+      agent: "Malware Analysis",
+      tools: ["hash_lookup", "static_binary_analysis", "sandbox_detonation"]
+      confidence: { naive: 60, rag: 75, probe: 97 }
+    },
+    {
+      text: "check blocklist membership for 203.0.113.44",
+      agent: "Threat Intel",
+      tools: ["blocklist_query", "ip_reputation_lookup", "indicator_correlation"]
+      confidence: { naive: 55, rag: 68, probe: 88 }
+    },
+    {
+      text: "review certificate signing events since 02:14 UTC",
+      agent: "Log Search",
+      tools: ["cert_signing_audit", "timestamp_range_filter", "auth_log_query"]
+      confidence: { naive: 63, rag: 77, probe: 92 }
+    },
+    {
+      text: "search logs for failed auth attempts on SRV-APP-03",
+      agent: "Log Search",
+      tools: ["auth_log_query", "failed_login_aggregator", "host_inventory_lookup"]
+      confidence: { naive: 66, rag: 82, probe: 95 }
+    },
+    {
+      text: "triage critical alert: anomalous outbound traffic from SRV-LNX-04",
+      agent: "Network Analysis",
+      tools: ["traffic_anomaly_detector", "netflow_query", "host_inventory_lookup"]
+      confidence: { naive: 59, rag: 72, probe: 90 }
+    }
+  ];
+
+  // Hardcoded latency / token figures per system.
+  // TODO(Rishit): replace with measured values from the live inference server.
+  const SYSTEM_STATS = {
+    naive: { label: "Naive",               latency: 8500, tokens: 150000 },
+    rag:   { label: "RAG",                 latency: 372,  tokens: 800 },
+    probe: { label: "Probe-Routed (Ours)", latency: 0.8,  tokens: 89 }
+  };
+
+  // =====================================================================
+  // Render query chips
+  // =====================================================================
+  const chipStrip = document.getElementById('chip-strip');
+
+  function renderChips() {
+    chipStrip.innerHTML = '';
+    SAMPLE_QUERIES.forEach((q, idx) => {
+      if (q.consumed) return;
+      const chip = document.createElement('div');
+      chip.className = 'chip';
+      chip.draggable = true;
+      chip.textContent = q.text;
+      chip.title = q.text;
+      chip.dataset.queryIndex = idx;
+
+      chip.addEventListener('dragstart', (e) => {
+        chip.classList.add('dragging');
+        e.dataTransfer.setData('text/plain', String(idx));
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+
+      chipStrip.appendChild(chip);
+    });
+  }
+  renderChips();
+
+  // =====================================================================
+  // Drop targets (the three architecture cards)
+  // =====================================================================
+  const treeCards = document.querySelectorAll('.tree-card');
+
+  treeCards.forEach((card) => {
+    const system = card.dataset.system;
+
+    card.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      card.classList.add('drag-over');
+    });
+
+    card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+
+    card.addEventListener('drop', (e) => {
+      e.preventDefault();
+      card.classList.remove('drag-over');
+
+      const idx = parseInt(e.dataTransfer.getData('text/plain'), 10);
+      if (Number.isNaN(idx)) return;
+      const query = SAMPLE_QUERIES[idx];
+      if (!query || query.consumed) return;
+
+      query.consumed = true;
+      renderChips();
+
+      runSimulation(system, query);
+    });
+  });
+
+  // =====================================================================
+  // Simulation: loading animation -> hardcoded result card
+  //
+  // TODO(Rishit): replace runSimulation's internals with a real call, e.g.
+  //   const res = await fetch('/api/' + system + '/route', {
+  //     method: 'POST', body: JSON.stringify({ query: query.text })
+  //   });
+  //   const data = await res.json();
+  // and use `data.agent`, `data.tools`, `data.latency_ms`, `data.tokens`.
+  // =====================================================================
+  function runSimulation(system, query, targetEl) {
+    const slot = targetEl || document.getElementById('result-' + system);
+    const stats = SYSTEM_STATS[system];
+
+    // Base hardcoded confidence values (used when a query has no per-query
+    // override, e.g. custom queries that didn't match a sample query).
+    // TODO(Rishit): replace with the live confidence returned by each system
+    // (softmax probability for Naive, cosine similarity for RAG, orchestrator
+    // probe probability for Probe-Routed).
+    const BASE_CONFIDENCE = { naive: 61, rag: 74, probe: 94 };
+    const confidence = (query.confidence && query.confidence[system] !== undefined)
+      ? query.confidence[system]
+      : BASE_CONFIDENCE[system];
+
+    const matchIndicator = (system === 'probe')
+      ? `<span class="match-indicator">${confidence}% confident</span>`
+      : '';
+
+    slot.innerHTML = `
+      <div class="result-card">
+        <div class="loading-dots"><span></span><span></span><span></span></div>
+      </div>
+    `;
+
+    setTimeout(() => {
+      slot.innerHTML = `
+        <div class="result-card">
+          <div class="result-row-line"><span class="label">Predicted Agent</span><span class="value accent">${query.agent}${matchIndicator}</span></div>
+          <div class="result-row-line"><span class="label">Top Tools</span><span class="value">${query.tools.join(', ')}</span></div>
+          <div class="result-row-line"><span class="label">Latency</span><span class="value">${formatLatency(stats.latency)}</span></div>
+          <div class="result-row-line"><span class="label">Tokens</span><span class="value">${stats.tokens.toLocaleString()}</span></div>
+          <div class="result-row-line"><span class="label">Confidence</span><span class="value">${confidence}%</span></div>
+          <div class="confidence-bar-track"><div class="confidence-bar-fill" style="width: ${confidence}%;"></div></div>
+        </div>
+      `;
+    }, 1500);
+  }
+
+  function formatLatency(ms) {
+    if (ms < 1) return ms.toFixed(1) + 'ms';
+    return Math.round(ms).toLocaleString() + 'ms';
+  }
+
+  // =====================================================================
+  // Custom query form — runs the same simulation on all 3 systems
+  //
+  // TODO(Rishit): wire this up to real per-system endpoints and remove the
+  // pickSimulatedMatch heuristic below once live inference is available.
+  // =====================================================================
+  const customForm = document.getElementById('custom-form');
+  const customInput = document.getElementById('custom-input');
+  const customResultsRow = document.getElementById('custom-results-row');
+
+  // Very rough keyword heuristic to pick a plausible agent/tools for an
+  // arbitrary custom query, purely for demo purposes.
+  function pickSimulatedMatch(text) {
+    const lower = text.toLowerCase();
+    const scored = SAMPLE_QUERIES.map((q) => {
+      const words = q.text.toLowerCase().split(/\W+/).filter(Boolean);
+      let score = 0;
+      words.forEach((w) => { if (w.length > 3 && lower.includes(w)) score += 1; });
+      return { q, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    if (scored[0].score > 0) return scored[0].q;
+    // fall back to a generic match
+    return {
+      agent: "Log Search",
+      tools: ["auth_log_query", "host_inventory_lookup", "timestamp_range_filter"]
+    };
+  }
+
+  customForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = customInput.value.trim();
+    if (!text) return;
+
+    const match = pickSimulatedMatch(text);
+    const query = { text, agent: match.agent, tools: match.tools };
+
+    customResultsRow.style.display = 'flex';
+    ['naive', 'rag', 'probe'].forEach((system) => {
+      const slot = document.getElementById('custom-result-' + system);
+      runSimulation(system, query, slot);
+    });
+  });
+
+  // =====================================================================
+  // Benchmark table
+  // =====================================================================
+  const BENCHMARK_DATA = [
+    { name: "Naive (Llama-8B)",      top1: 0.658, recall5: null,  recall10: null,  latency: 8500, tokens: 150000, highlight: false },
+    { name: "RAG (MiniLM)",          top1: 0.712, recall5: 0.856, recall10: 0.901, latency: 372,  tokens: 800,    highlight: false },
+    { name: "Probe-Routed (Ours)",   top1: 0.696, recall5: 0.803, recall10: 0.891, latency: 0.8,  tokens: 89,     highlight: true },
+    { name: "Frontier (Qwen-72B)",   top1: 0.748, recall5: null,  recall10: null,  latency: 9200, tokens: 150000, highlight: false }
+  ];
+
+  function fmt(v) {
+    return v === null || v === undefined ? '—' : v;
+  }
+
+  const benchBody = document.getElementById('bench-table-body');
+  BENCHMARK_DATA.forEach((row) => {
+    const tr = document.createElement('tr');
+    if (row.highlight) tr.classList.add('highlight');
+    tr.innerHTML = `
+      <td>${row.name}</td>
+      <td>${fmt(row.top1)}</td>
+      <td>${fmt(row.recall5)}</td>
+      <td>${fmt(row.recall10)}</td>
+      <td>${row.latency.toLocaleString()}</td>
+      <td>${row.tokens.toLocaleString()}</td>
+    `;
+    benchBody.appendChild(tr);
+  });
+
+  // =====================================================================
+  // SVG bar charts (pure SVG, no libraries)
+  // =====================================================================
+  const CHART_COLORS = ['#94A3B8', '#60A5FA', '#2563EB', '#1E293B'];
+
+  function buildBarChart(containerId, labels, values, opts) {
+    opts = opts || {};
+    const width = 320;
+    const height = 220;
+    const padLeft = 44;
+    const padBottom = 56;
+    const padTop = 16;
+    const padRight = 16;
+
+    const plotWidth = width - padLeft - padRight;
+    const plotHeight = height - padTop - padBottom;
+
+    const useLog = !!opts.logScale;
+
+    let minVal, maxVal;
+    if (useLog) {
+      const positives = values.filter((v) => v > 0);
+      minVal = Math.min(...positives);
+      maxVal = Math.max(...positives);
+    } else {
+      minVal = 0;
+      maxVal = Math.max(...values);
+    }
+
+    function scaleY(v) {
+      if (useLog) {
+        const logMin = Math.log10(minVal);
+        const logMax = Math.log10(maxVal);
+        const t = (Math.log10(v) - logMin) / (logMax - logMin || 1);
+        return plotHeight - t * plotHeight;
+      }
+      const t = (v - minVal) / (maxVal - minVal || 1);
+      return plotHeight - t * plotHeight;
+    }
+
+    const barCount = values.length;
+    const barGap = 18;
+    const barWidth = (plotWidth - barGap * (barCount - 1)) / barCount;
+
+    let bars = '';
+    let labelEls = '';
+    let valueEls = '';
+
+    values.forEach((v, i) => {
+      const x = padLeft + i * (barWidth + barGap);
+      const y = padTop + scaleY(v);
+      const barHeight = (padTop + plotHeight) - y;
+      const color = CHART_COLORS[i % CHART_COLORS.length];
+
+      bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" rx="3" fill="${color}"></rect>`;
+
+      valueEls += `<text x="${(x + barWidth / 2).toFixed(1)}" y="${(y - 6).toFixed(1)}" font-size="10.5" fill="#1E293B" text-anchor="middle">${opts.formatValue ? opts.formatValue(v) : v}</text>`;
+
+      labelEls += `<text x="${(x + barWidth / 2).toFixed(1)}" y="${(padTop + plotHeight + 18).toFixed(1)}" font-size="10" fill="#64748B" text-anchor="middle">${labels[i]}</text>`;
+    });
+
+    // baseline axis
+    const axisY = padTop + plotHeight;
+    const axisLine = `<line x1="${padLeft}" y1="${axisY}" x2="${width - padRight}" y2="${axisY}" stroke="#E2E8F0" stroke-width="1"></line>`;
+
+    const svg = `
+      <svg width="100%" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif">
+        ${axisLine}
+        ${bars}
+        ${valueEls}
+        ${labelEls}
+      </svg>
+    `;
+
+    document.getElementById(containerId).innerHTML = svg;
+  }
+
+  // Short labels for chart x-axes
+  const CHART_LABELS = ['Naive', 'RAG', 'Probe (Ours)', 'Frontier'];
+
+  buildBarChart('chart-accuracy',
+    CHART_LABELS,
+    BENCHMARK_DATA.map((d) => d.top1),
+    { formatValue: (v) => v.toFixed(3) }
+  );
+
+  buildBarChart('chart-latency',
+    CHART_LABELS,
+    BENCHMARK_DATA.map((d) => d.latency),
+    { logScale: true, formatValue: (v) => (v < 1 ? v.toFixed(1) : Math.round(v).toLocaleString()) }
+  );
+
+  buildBarChart('chart-tokens',
+    CHART_LABELS,
+    BENCHMARK_DATA.map((d) => d.tokens),
+    { logScale: true, formatValue: (v) => v.toLocaleString() }
+  );
+
+  // =====================================================================
+  // "Run Full Benchmark" button — disabled placeholder
+  //
+  // TODO(Rishit): wire this to POST /api/benchmark/run and stream/poll for
+  // progress, then refresh BENCHMARK_DATA + table + charts with live results.
+  // =====================================================================
+  const runBenchBtn = document.getElementById('run-bench-btn');
+  const runBenchStatus = document.getElementById('run-bench-status');
+
+  runBenchBtn.addEventListener('click', () => {
+    runBenchStatus.textContent = 'Connecting to inference server...';
+    runBenchBtn.disabled = true;
+  });
+</script>
+
+</body>
+</html>

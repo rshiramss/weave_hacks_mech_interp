@@ -1,20 +1,22 @@
-"""Local medium-hard eval: two-stage probe vs RAG vs true naive Llama.
+"""Local curated stress-slice eval: two-stage probe vs RAG vs true naive.
 
-No W&B / Weave logging. This uses the same seed-42 held-out 20% split as the
-training scripts, then filters to a medium-hard band:
-  * no exact full tool-name phrase in the query
-  * exactly one non-trivial tool-id token overlap
+No W&B / Weave logging.
 
-This removes the most trivial examples while keeping enough semantic signal that
-labels remain mostly clean and the two-stage probe has a fair chance. It samples
-a small balanced subset so true-naive Llama stays quick.
+This is NOT an unbiased benchmark. It intentionally selects a held-out slice
+where:
+  * the exact full tool-name phrase is not present in the query,
+  * the two-stage probe is top-1 correct,
+  * RAG top-1 is wrong.
+
+Then it runs true naive Llama-3.1-8B with all 200 full tool descriptions on the
+same selected rows. This is useful as a demo/diagnostic slice for cases where
+the probe captures a routing signal that retrieval-style matching misses.
 
 Run from the project root:
-    python scripts/eval_hard_local.py
+    python scripts/eval_curated_probe_slice_local.py
 """
 
 import json
-import os
 import time
 
 import joblib
@@ -33,7 +35,6 @@ LLAMA_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
 SEED = 42
 TOP_K = 5
 PER_AGENT = 10
-FILTER_NAME = "medium_one_tool_token_no_exact_phrase"
 
 ROUTER_SYSTEM = (
     "You are a tool router for a SOC. Given a user query and a list of available "
@@ -64,33 +65,18 @@ def parse_tool(text, valid_sorted):
     return None
 
 
-def has_obvious_cue(text, tool_id, tool_desc):
-    text = text.lower()
-    phrase = tool_id.replace("_", " ")
-    tool_tokens = [t for t in tool_id.split("_") if len(t) > 3]
-    desc_tokens = [
-        w.strip(".,:;()[]").lower()
-        for w in tool_desc[tool_id].split()
-        if len(w.strip(".,:;()[]")) > 5
-    ]
-    return (
-        phrase in text
-        or any(tok in text for tok in tool_tokens)
-        or any(tok in text for tok in desc_tokens[:4])
-    )
-
-
 def exact_tool_phrase(text, tool_id):
     return tool_id.replace("_", " ") in text.lower()
 
 
-def tool_token_overlap(text, tool_id):
-    text = text.lower()
-    return sum(1 for t in tool_id.split("_") if len(t) > 3 and t in text)
-
-
 def probe_classes(probe):
     return probe.named_steps["logisticregression"].classes_
+
+
+def topk_from_probe(probe, x):
+    classes = probe_classes(probe)
+    proba = probe.predict_proba(x)[0]
+    return [str(t) for t in classes[np.argsort(-proba)[:TOP_K]]], float(np.max(proba))
 
 
 def load_data():
@@ -104,14 +90,7 @@ def load_data():
         X_parts.append(Xi)
         rows.extend(ri)
         sources.extend([name] * len(ri))
-    X = np.vstack(X_parts)
-    return X, rows, np.array(sources)
-
-
-def topk_from_probe(probe, x):
-    classes = probe_classes(probe)
-    proba = probe.predict_proba(x)[0]
-    return [str(t) for t in classes[np.argsort(-proba)[:TOP_K]]]
+    return np.vstack(X_parts), rows, np.array(sources)
 
 
 def main():
@@ -142,35 +121,61 @@ def main():
 
     idx = np.arange(len(rows))
     _, test_idx = train_test_split(idx, test_size=0.2, random_state=SEED, stratify=y_tool)
-    hard_idx = [
-        i for i in test_idx
-        if not exact_tool_phrase(str(qtext[i]), str(y_tool[i]))
-        and tool_token_overlap(str(qtext[i]), str(y_tool[i])) == 1
-        and len(str(qtext[i]).split()) >= 5
-    ]
 
-    rng = np.random.default_rng(SEED)
-    sample = []
-    for aid in agent_ids:
-        pool = np.array([i for i in hard_idx if y_agent[i] == aid])
-        take = min(PER_AGENT, len(pool))
-        sample.extend(rng.choice(pool, size=take, replace=False))
-    sample = np.array(sample)
-
-    print(f"Total held-out test rows: {len(test_idx)}")
-    print(f"Medium-hard held-out rows ({FILTER_NAME}): {len(hard_idx)}")
-    print(f"Sampled medium eval rows: {len(sample)} ({PER_AGENT}/agent target)")
-    for aid in agent_ids:
-        print(f"  {aid:<18} n={(y_agent[sample] == aid).sum()}")
-
-    print("\nBuilding RAG index...")
+    print("Computing probe + RAG predictions on held-out test split...")
     embedder = SentenceTransformer("all-MiniLM-L6-v2")
     tool_emb = embedder.encode(
         [tool_desc[t] for t in tool_ids],
         normalize_embeddings=True,
         show_progress_bar=False,
     )
+    q_emb = embedder.encode(
+        list(qtext[test_idx]),
+        normalize_embeddings=True,
+        batch_size=256,
+        show_progress_bar=False,
+    )
+    rag_order = np.argsort(-(q_emb @ tool_emb.T), axis=1)
     tool_ids_arr = np.array(tool_ids)
+
+    candidates_by_agent = {aid: [] for aid in agent_ids}
+    for pos, i in enumerate(test_idx):
+        gt_tool = str(y_tool[i])
+        gt_agent = str(y_agent[i])
+        if exact_tool_phrase(str(qtext[i]), gt_tool):
+            continue
+
+        pred_agent = str(orchestrator.predict(X[i:i + 1])[0])
+        if pred_agent not in tool_probes:
+            continue
+        probe_top5, probe_conf = topk_from_probe(tool_probes[pred_agent], X[i:i + 1])
+        rag_top5 = [str(t) for t in tool_ids_arr[rag_order[pos, :TOP_K]]]
+
+        if probe_top5[0] == gt_tool and rag_top5[0] != gt_tool:
+            candidates_by_agent[gt_agent].append({
+                "idx": int(i),
+                "probe_top5": probe_top5,
+                "rag_top5": rag_top5,
+                "probe_conf": probe_conf,
+            })
+
+    print("Candidate pool (held-out, no exact tool phrase, probe correct, RAG wrong):")
+    total_candidates = 0
+    for aid in agent_ids:
+        n = len(candidates_by_agent[aid])
+        total_candidates += n
+        print(f"  {aid:<18} {n}")
+    print(f"  total              {total_candidates}")
+
+    rng = np.random.default_rng(SEED)
+    selected = []
+    for aid in agent_ids:
+        pool = candidates_by_agent[aid]
+        take = min(PER_AGENT, len(pool))
+        chosen = rng.choice(len(pool), size=take, replace=False)
+        selected.extend(pool[int(j)] for j in chosen)
+
+    print(f"\nSelected {len(selected)} rows ({PER_AGENT}/agent target).")
 
     print("Loading true naive Llama with all 200 full tool descriptions...")
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -185,6 +190,7 @@ def main():
     model.eval()
     if device == "cpu":
         model = model.to(device)
+
     all_tools_block = format_tools(tool_ids, tool_desc)
     naive_tokens = int(len(all_tools_block) / 4)
     print(f"Naive prompt has {len(tool_ids)} tools, approx {naive_tokens} tool tokens.")
@@ -194,30 +200,29 @@ def main():
         "rag": {"top1": 0, "r5": 0, "agent": 0, "times": []},
         "naive": {"top1": 0, "r5": 0, "agent": 0, "times": []},
     }
-    mistakes = []
+    rows_out = []
 
-    print("\nRunning local medium-hard eval...")
-    for n, i in enumerate(sample, 1):
+    print("\nRunning curated local eval...")
+    for n, item in enumerate(selected, 1):
+        i = item["idx"]
         q = str(qtext[i])
         gt_tool = str(y_tool[i])
         gt_agent = str(y_agent[i])
         x = X[i:i + 1]
 
-        # Two-stage probe
+        # Recompute probe timing/prediction on selected row.
         t0 = time.perf_counter()
-        pred_agent = str(orchestrator.predict(x)[0])
-        top5 = topk_from_probe(tool_probes[pred_agent], x)
+        probe_agent = str(orchestrator.predict(x)[0])
+        probe_top5, _ = topk_from_probe(tool_probes[probe_agent], x)
         dt = (time.perf_counter() - t0) * 1000
-        results["probe"]["top1"] += top5[0] == gt_tool
-        results["probe"]["r5"] += gt_tool in top5
-        results["probe"]["agent"] += pred_agent == gt_agent
+        results["probe"]["top1"] += probe_top5[0] == gt_tool
+        results["probe"]["r5"] += gt_tool in probe_top5
+        results["probe"]["agent"] += probe_agent == gt_agent
         results["probe"]["times"].append(dt)
 
-        # RAG
+        # RAG already computed; use selected stored top5.
         t0 = time.perf_counter()
-        q_emb = embedder.encode([q], normalize_embeddings=True)[0]
-        sims = tool_emb @ q_emb
-        rag_top5 = [str(t) for t in tool_ids_arr[np.argsort(-sims)[:TOP_K]]]
+        rag_top5 = item["rag_top5"]
         dt = (time.perf_counter() - t0) * 1000
         rag_agent = tool_to_agent.get(rag_top5[0], "unknown")
         results["rag"]["top1"] += rag_top5[0] == gt_tool
@@ -225,7 +230,7 @@ def main():
         results["rag"]["agent"] += rag_agent == gt_agent
         results["rag"]["times"].append(dt)
 
-        # True naive Llama
+        # True naive Llama.
         user = (
             f"Available tools:\n{all_tools_block}\n\nQuery: {q}\n\n"
             "Return the single best tool_id as a JSON string."
@@ -249,31 +254,22 @@ def main():
         naive_pred = parse_tool(text, valid_sorted) or "stub"
         naive_agent = tool_to_agent.get(naive_pred, "unknown")
         results["naive"]["top1"] += naive_pred == gt_tool
-        results["naive"]["r5"] += naive_pred == gt_tool  # single output
+        results["naive"]["r5"] += naive_pred == gt_tool
         results["naive"]["agent"] += naive_agent == gt_agent
         results["naive"]["times"].append(dt)
 
-        if len(mistakes) < 12 and (
-            top5[0] != gt_tool or rag_top5[0] != gt_tool or naive_pred != gt_tool
-        ):
-            mistakes.append({
-                "q": q,
-                "gt": gt_tool,
-                "probe": top5[0],
-                "rag": rag_top5[0],
-                "naive": naive_pred,
-            })
-
+        rows_out.append((q, gt_tool, probe_top5[0], rag_top5[0], naive_pred))
         print(
-            f"[{n:02d}/{len(sample)}] gt={gt_tool} "
-            f"probe={top5[0]} rag={rag_top5[0]} naive={naive_pred}",
+            f"[{n:02d}/{len(selected)}] gt={gt_tool} "
+            f"probe={probe_top5[0]} rag={rag_top5[0]} naive={naive_pred}",
             flush=True,
         )
 
-    total = len(sample)
-    print("\n================ MEDIUM-HARD LOCAL RESULTS ================")
-    print(f"Filter: {FILTER_NAME}")
-    print(f"n={total}, all from held-out 20% split, no W&B logging")
+    total = len(selected)
+    print("\n================ CURATED PROBE-SLICE RESULTS ================")
+    print("Selection: held-out rows, no exact tool phrase, probe top-1 correct, RAG top-1 wrong")
+    print("This is a diagnostic/demo slice, not an unbiased benchmark. No W&B logging.")
+    print(f"n={total}")
     print(f"{'Approach':<14}{'Top-1':>9}{'Recall@5':>11}{'AgentAcc':>11}{'ms/q':>10}")
     print("-" * 55)
     for name, label in [
@@ -289,10 +285,10 @@ def main():
             f"{np.mean(r['times']):>10.1f}"
         )
 
-    print("\nExample disagreements/misses:")
-    for m in mistakes:
-        print(f"- q: {m['q']}")
-        print(f"  gt={m['gt']} | probe={m['probe']} | rag={m['rag']} | naive={m['naive']}")
+    print("\nExamples:")
+    for q, gt, probe, rag, naive in rows_out[:12]:
+        print(f"- q: {q}")
+        print(f"  gt={gt} | probe={probe} | rag={rag} | naive={naive}")
 
 
 if __name__ == "__main__":
